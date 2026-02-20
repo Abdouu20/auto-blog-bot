@@ -10,10 +10,10 @@ from email.mime.multipart import MIMEMultipart
 WP_POST_EMAIL = os.getenv('WP_POST_EMAIL')
 GMAIL_USER = os.getenv('GMAIL_USER')
 GMAIL_APP_PASSWORD = os.getenv('GMAIL_APP_PASSWORD')
-GROQ_API_KEY = os.getenv('GROQ_API_KEY')
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
-# Groq Model (Newest & Fastest)
-GROQ_MODEL = "llama-3.2-3b-preview"
+# Gemini Model (Stable & Free)
+GEMINI_MODEL = "gemini-2.0-flash-exp"
 
 # RSS Feeds
 RSS_FEEDS = [
@@ -53,30 +53,38 @@ def fetch_news():
     return "\n".join(all_entries)
 
 def generate_summary(news_text):
-    """Sends text to Groq API for summarization (More Stable than HF)."""
+    """Sends text to Google Gemini API for summarization."""
     
-    # Groq uses OpenAI-compatible endpoint
-    url = "https://api.groq.com/openai/v1/chat/completions"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     
     headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
     
     payload = {
-        "messages": [
+        "contents": [
             {
-                "role": "system", 
-                "content": "You are an expert editor for a niche AI blog. Summarize news into a coherent, engaging 500-word article. FORMAT: First line must be the Title only. Rest is body. Include Affiliate Disclosure at bottom. No Markdown headers for title."
-            },
-            {
-                "role": "user", 
-                "content": f"News Items:\n{news_text}"
+                "parts": [
+                    {
+                        "text": f"""You are an expert editor for a niche AI blog. 
+Summarize the following news items into a coherent, engaging 500-word article.
+
+FORMAT REQUIREMENTS:
+1. The first line must be the Title only (no markdown, no # symbols).
+2. The rest of the text is the body content.
+3. Include an Affiliate Disclosure at the very bottom.
+4. Write in a professional, engaging tone.
+
+News Items:
+{news_text}"""
+                    }
+                ]
             }
         ],
-        "model": GROQ_MODEL,
-        "temperature": 0.7,
-        "max_tokens": 1000
+        "generationConfig": {
+            "temperature": 0.7,
+            "maxOutputTokens": 1000,
+        }
     }
     
     try:
@@ -84,9 +92,9 @@ def generate_summary(news_text):
         
         if response.status_code == 200:
             result = response.json()
-            return result['choices'][0]['message']['content']
+            return result['candidates'][0]['content']['parts'][0]['text']
         else:
-            return f"Error: Groq API returned status {response.status_code} - {response.text}"
+            return f"Error: Gemini API returned status {response.status_code} - {response.text[:200]}"
             
     except Exception as e:
         return f"Error generating content: {str(e)}"
@@ -113,14 +121,14 @@ def send_email_to_wordpress(subject, body):
 # --- MAIN EXECUTION ---
 if __name__ == "__main__":
     print("=" * 50)
-    print("Starting Auto Blog Bot (Groq Edition)...")
+    print("Starting Auto Blog Bot (Gemini Edition)...")
     print("=" * 50)
     
     print("\n[1/3] Fetching news...")
     news = fetch_news()
     
     if news:
-        print(f"\n[2/3] Generating summary via Groq...")
+        print(f"\n[2/3] Generating summary via Google Gemini...")
         article = generate_summary(news)
         
         if "Error" in article:
