@@ -11,9 +11,15 @@ GMAIL_USER = os.getenv('GMAIL_USER')
 GMAIL_APP_PASSWORD = os.getenv('GMAIL_APP_PASSWORD')
 HF_API_TOKEN = os.getenv('HF_API_TOKEN')
 
-HF_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
+# Multiple models to try (in order of preference)
+HF_MODELS = [
+    "Qwen/Qwen2.5-0.5B-Instruct",
+    "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    "google/gemma-2b-it",
+    "microsoft/phi-2"
+]
 
-# RSS Feeds - NO TRAILING SPACES, NO EXTRA CHARACTERS
+# RSS Feeds
 RSS_FEEDS = [
     "https://www.reddit.com/r/GeminiAI/top/.rss?limit=5&t=week",
     "https://www.reddit.com/r/OpenAI/top/.rss?limit=5&t=week",
@@ -31,10 +37,7 @@ def fetch_news():
     
     for feed_url in RSS_FEEDS:
         try:
-            # Strip any whitespace from URL
             clean_url = feed_url.strip()
-            
-            # Add User-Agent to avoid being blocked
             feed = feedparser.parse(clean_url, agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
             
             if feed.entries:
@@ -54,7 +57,7 @@ def fetch_news():
     return "\n".join(all_entries)
 
 def generate_summary(news_text):
-    """Sends text to Hugging Face Inference API for summarization."""
+    """Tries multiple Hugging Face models until one works."""
     prompt = f"""
     You are an expert editor for a niche AI blog. 
     Summarize the following news items into a coherent, engaging 500-word article.
@@ -75,28 +78,41 @@ def generate_summary(news_text):
         "parameters": {"max_new_tokens": 600, "temperature": 0.7, "return_full_text": False}
     }
     
-    try:
-        response = requests.post(
-            f"https://api-inference.huggingface.co/models/{HF_MODEL}",
-            headers=headers,
-            json=payload,
-            timeout=60
-        )
-        
-        if response.status_code == 503:
-            return "Error: Model is loading. Please try again later."
-        
-        if response.status_code != 200:
-            return f"Error: API returned status {response.status_code}"
+    for model in HF_MODELS:
+        try:
+            print(f"  → Trying model: {model}")
+            response = requests.post(
+                f"https://api-inference.huggingface.co/models/{model}",
+                headers=headers,
+                json=payload,
+                timeout=90
+            )
             
-        result = response.json()
-        if isinstance(result, list):
-            return result[0]['generated_text']
-        else:
-            return result['generated_text']
+            if response.status_code == 200:
+                print(f"  ✓ Model working: {model}")
+                result = response.json()
+                if isinstance(result, list):
+                    return result[0]['generated_text']
+                else:
+                    return result['generated_text']
             
-    except Exception as e:
-        return f"Error generating content: {str(e)}"
+            elif response.status_code == 503:
+                print(f"  ⚠ Model loading (503), trying next...")
+                continue
+            
+            elif response.status_code == 410:
+                print(f"  ✗ Model unavailable (410), trying next...")
+                continue
+            
+            else:
+                print(f"  ✗ Status {response.status_code}, trying next...")
+                continue
+                
+        except Exception as e:
+            print(f"  ✗ Error with {model}: {str(e)}")
+            continue
+    
+    return f"Error: All models failed. Last status: {response.status_code}"
 
 def send_email_to_wordpress(subject, body):
     """Sends an email to the WordPress Post-by-Email address."""
@@ -142,7 +158,6 @@ if __name__ == "__main__":
             send_email_to_wordpress(title, body)
     else:
         print("\n✗ No news found to summarize.")
-        print("Tip: Check if RSS feeds are accessible or try alternative sources.")
     
     print("\n" + "=" * 50)
     print("Bot execution complete.")
