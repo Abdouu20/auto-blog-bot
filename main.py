@@ -2,6 +2,7 @@ import os
 import feedparser
 import requests
 import smtplib
+import json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -9,15 +10,10 @@ from email.mime.multipart import MIMEMultipart
 WP_POST_EMAIL = os.getenv('WP_POST_EMAIL')
 GMAIL_USER = os.getenv('GMAIL_USER')
 GMAIL_APP_PASSWORD = os.getenv('GMAIL_APP_PASSWORD')
-HF_API_TOKEN = os.getenv('HF_API_TOKEN')
+GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 
-# Multiple models to try (in order of preference)
-HF_MODELS = [
-    "Qwen/Qwen2.5-0.5B-Instruct",
-    "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-    "google/gemma-2b-it",
-    "microsoft/phi-2"
-]
+# Groq Model (Newest & Fastest)
+GROQ_MODEL = "llama-3.2-3b-preview"
 
 # RSS Feeds
 RSS_FEEDS = [
@@ -57,62 +53,43 @@ def fetch_news():
     return "\n".join(all_entries)
 
 def generate_summary(news_text):
-    """Tries multiple Hugging Face models until one works."""
-    prompt = f"""
-    You are an expert editor for a niche AI blog. 
-    Summarize the following news items into a coherent, engaging 500-word article.
+    """Sends text to Groq API for summarization (More Stable than HF)."""
     
-    FORMAT REQUIREMENTS:
-    1. The first line must be the Title only.
-    2. The rest of the text is the body.
-    3. Include an Affiliate Disclosure at the very bottom.
-    4. Do not use Markdown headers (###) for the title, just plain text.
+    # Groq uses OpenAI-compatible endpoint
+    url = "https://api.groq.com/openai/v1/chat/completions"
     
-    News Items:
-    {news_text}
-    """
-    
-    headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
-    payload = {
-        "inputs": prompt,
-        "parameters": {"max_new_tokens": 600, "temperature": 0.7, "return_full_text": False}
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
     }
     
-    for model in HF_MODELS:
-        try:
-            print(f"  → Trying model: {model}")
-            response = requests.post(
-                f"https://api-inference.huggingface.co/models/{model}",
-                headers=headers,
-                json=payload,
-                timeout=90
-            )
-            
-            if response.status_code == 200:
-                print(f"  ✓ Model working: {model}")
-                result = response.json()
-                if isinstance(result, list):
-                    return result[0]['generated_text']
-                else:
-                    return result['generated_text']
-            
-            elif response.status_code == 503:
-                print(f"  ⚠ Model loading (503), trying next...")
-                continue
-            
-            elif response.status_code == 410:
-                print(f"  ✗ Model unavailable (410), trying next...")
-                continue
-            
-            else:
-                print(f"  ✗ Status {response.status_code}, trying next...")
-                continue
-                
-        except Exception as e:
-            print(f"  ✗ Error with {model}: {str(e)}")
-            continue
+    payload = {
+        "messages": [
+            {
+                "role": "system", 
+                "content": "You are an expert editor for a niche AI blog. Summarize news into a coherent, engaging 500-word article. FORMAT: First line must be the Title only. Rest is body. Include Affiliate Disclosure at bottom. No Markdown headers for title."
+            },
+            {
+                "role": "user", 
+                "content": f"News Items:\n{news_text}"
+            }
+        ],
+        "model": GROQ_MODEL,
+        "temperature": 0.7,
+        "max_tokens": 1000
+    }
     
-    return f"Error: All models failed. Last status: {response.status_code}"
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        
+        if response.status_code == 200:
+            result = response.json()
+            return result['choices'][0]['message']['content']
+        else:
+            return f"Error: Groq API returned status {response.status_code} - {response.text}"
+            
+    except Exception as e:
+        return f"Error generating content: {str(e)}"
 
 def send_email_to_wordpress(subject, body):
     """Sends an email to the WordPress Post-by-Email address."""
@@ -136,15 +113,14 @@ def send_email_to_wordpress(subject, body):
 # --- MAIN EXECUTION ---
 if __name__ == "__main__":
     print("=" * 50)
-    print("Starting Auto Blog Bot...")
+    print("Starting Auto Blog Bot (Groq Edition)...")
     print("=" * 50)
     
     print("\n[1/3] Fetching news...")
     news = fetch_news()
     
     if news:
-        print(f"\n[2/3] Generating summary...")
-        print(f"Found {len(news.split(chr(10)))} news items")
+        print(f"\n[2/3] Generating summary via Groq...")
         article = generate_summary(news)
         
         if "Error" in article:
