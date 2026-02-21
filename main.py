@@ -2,18 +2,21 @@ import os
 import feedparser
 import requests
 import smtplib
-import json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # --- CONFIGURATION ---
 WP_POST_EMAIL = os.getenv('WP_POST_EMAIL')
 GMAIL_USER = os.getenv('GMAIL_USER')
 GMAIL_APP_PASSWORD = os.getenv('GMAIL_APP_PASSWORD')
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
-# Gemini Model (Stable & Free)
-GEMINI_MODEL = "gemini-2.0-flash-exp"
+# Local Ollama (No API Key Needed!)
+OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_MODEL = "llama3.2"  # Change to your downloaded model name
 
 # RSS Feeds
 RSS_FEEDS = [
@@ -53,20 +56,9 @@ def fetch_news():
     return "\n".join(all_entries)
 
 def generate_summary(news_text):
-    """Sends text to Google Gemini API for summarization."""
+    """Uses LOCAL Ollama instead of cloud API (100% Free Forever)."""
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-    
-    headers = {
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "contents": [
-            {
-                "parts": [
-                    {
-                        "text": f"""You are an expert editor for a niche AI blog. 
+    prompt = f"""You are an expert editor for a niche AI blog. 
 Summarize the following news items into a coherent, engaging 500-word article.
 
 FORMAT REQUIREMENTS:
@@ -77,27 +69,27 @@ FORMAT REQUIREMENTS:
 
 News Items:
 {news_text}"""
-                    }
-                ]
-            }
-        ],
-        "generationConfig": {
+
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
             "temperature": 0.7,
-            "maxOutputTokens": 1000,
+            "num_predict": 1000
         }
     }
     
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        response = requests.post(OLLAMA_URL, json=payload, timeout=120)
         
         if response.status_code == 200:
-            result = response.json()
-            return result['candidates'][0]['content']['parts'][0]['text']
+            return response.json()['response']
         else:
-            return f"Error: Gemini API returned status {response.status_code} - {response.text[:200]}"
+            return f"Error: Ollama returned status {response.status_code}"
             
     except Exception as e:
-        return f"Error generating content: {str(e)}"
+        return f"Error generating content: {str(e)}. Make sure Ollama is running (ollama serve)"
 
 def send_email_to_wordpress(subject, body):
     """Sends an email to the WordPress Post-by-Email address."""
@@ -121,18 +113,22 @@ def send_email_to_wordpress(subject, body):
 # --- MAIN EXECUTION ---
 if __name__ == "__main__":
     print("=" * 50)
-    print("Starting Auto Blog Bot (Gemini Edition)...")
+    print("Starting Auto Blog Bot (Local Ollama Edition)...")
     print("=" * 50)
     
     print("\n[1/3] Fetching news...")
     news = fetch_news()
     
     if news:
-        print(f"\n[2/3] Generating summary via Google Gemini...")
+        print(f"\n[2/3] Generating summary via Local Ollama...")
         article = generate_summary(news)
         
         if "Error" in article:
             print(f"\n✗ {article}")
+            print("\n💡 TIP: Make sure Ollama is running:")
+            print("   1. Open Command Prompt")
+            print("   2. Run: ollama serve")
+            print("   3. Keep it open while script runs")
         else:
             lines = article.split('\n', 1)
             title = lines[0].replace("#", "").strip()
